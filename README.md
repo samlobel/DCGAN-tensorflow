@@ -1,5 +1,11 @@
 # DCGAN in Tensorflow
 
+## SAM MODIFICATIONS:
+I am going to have it take in something like a database object. The object will have methods like: get_real_samples. It will call these methods, and train accordingly. That's pretty much it.
+
+I need to create a "reader" object, and then make one for mnist and the other dataset.
+And then I'll make one for an arbitrary guy.
+
 Tensorflow implementation of [Deep Convolutional Generative Adversarial Networks](http://arxiv.org/abs/1511.06434) which is a stabilize Generative Adversarial Networks. The referenced torch code can be found [here](https://github.com/soumith/dcgan.torch).
 
 ![alt tag](DCGAN.png)
