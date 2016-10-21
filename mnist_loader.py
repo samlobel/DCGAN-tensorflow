@@ -46,8 +46,9 @@ print('loader')
 
 # Maybe I should make some not of size.
 class MNIST_Loader(Loader):
-  def __init__(self, batch_size):
+  def __init__(self, batch_size, y_dim=True):
     self.batch_size = batch_size
+    self.y_dim=y_dim
     # X, _ = load_mnist()
     self.mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
     # self.X = X
@@ -57,17 +58,22 @@ class MNIST_Loader(Loader):
 
   def get_config(self):
     config = {
-      'batch_size' : self.batch_size,
-      'image_w' : 28,
-      'image_h' : 28,
-      'image_z' : 1
+      'sample_size' : self.sample_size,
+      'output_size_x' : 28,
+      'output_size_y' : 28,
+      'image_z' : 1,
+      'is_crop' : False,
+      'y_dim' : 10 if self.y_dim else None,
+      'c_dim' : 1,
+      'is_crop' : False
     }
+
     return config
 
   def retrieve(self):
     # Only 50,000. But that really shouldn't be such an issue.
-    batch_xs, _ = mnist.train.next_batch(self.batch_size)
-    return batch_xs
+    batch_xs, batch_ys = mnist.train.next_batch(self.batch_size)
+    return batch_xs, batch_ys
     # X = self.X
     # if counter + self.batch_size >= len(X): #IS GTE OR JUST GT?
     #   to_return = np.concatenate(X[counter:], x[0:counter + batch_size - len(X)])

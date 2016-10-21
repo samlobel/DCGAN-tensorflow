@@ -8,19 +8,25 @@ from six.moves import xrange
 
 from ops import *
 from utils import *
+from mnist_loader import MNIST_Loader
 
 class DCGAN(object):
-    def __init__(self, sess, image_size=108, is_crop=True,
-                 batch_size=64, sample_size = 64, output_size=64,
+    def __init__(self, sess, image_size_x=108, image_size_y=108 is_crop=True,
+                 batch_size=64, sample_size = 64, output_size_w=64, output_size_h=64,
                  y_dim=None, z_dim=100, gf_dim=64, df_dim=64,
                  gfc_dim=1024, dfc_dim=1024, c_dim=3, dataset_name='default',
+                 loader=None,
                  checkpoint_dir=None, sample_dir=None):
         """
-
+        # This is so unneccesarilly confusing because they assume square inputs and whatnot.
         Args:
+            # sample_size: Looks like the number of real images to show. Batch size is for generated I guess. That's stupid.
+            # Image size: looks lke its the size of the input image. Different from the output_size
+            # Which is in case you resize it.
             sess: TensorFlow session
             batch_size: The size of batch. Should be specified before training.
-            output_size: (optional) The resolution in pixels of the images. [64]
+            output_size_w: (optional) The resolution WIDTH in pixels of the images. [64]
+            output_size_h: (optional) The resolution HEIGHT in pixels of the images. [64]
             y_dim: (optional) Dimension of dim for y. [None]
             z_dim: (optional) Dimension of dim for Z. [100]
             gf_dim: (optional) Dimension of gen filters in first conv layer. [64]
@@ -29,6 +35,19 @@ class DCGAN(object):
             dfc_dim: (optional) Dimension of discrim units for fully connected layer. [1024]
             c_dim: (optional) Dimension of image color. For grayscale input, set to 1. [3]
         """
+
+        if loader is None:
+            self.loader = MNIST_Loader(batch_size=batch_size)
+        else:
+            self.loader = loader
+
+        loader_config = self.loader.get_config()
+        self.batch_size = batch_size
+        self.image_size = loader_config.image_size
+
+
+
+
         self.sess = sess
         self.is_crop = is_crop
         self.is_grayscale = (c_dim == 1)
@@ -70,9 +89,9 @@ class DCGAN(object):
         if self.y_dim:
             self.y= tf.placeholder(tf.float32, [self.batch_size, self.y_dim], name='y')
 
-        self.images = tf.placeholder(tf.float32, [self.batch_size] + [self.output_size, self.output_size, self.c_dim],
+        self.images = tf.placeholder(tf.float32, [self.batch_size] + [self.output_size_w, self.output_size_h, self.c_dim],
                                     name='real_images')
-        self.sample_images= tf.placeholder(tf.float32, [self.sample_size] + [self.output_size, self.output_size, self.c_dim],
+        self.sample_images= tf.placeholder(tf.float32, [self.sample_size] + [self.output_size_w, self.output_size_h, self.c_dim],
                                         name='sample_images')
         self.z = tf.placeholder(tf.float32, [None, self.z_dim],
                                 name='z')
@@ -116,17 +135,10 @@ class DCGAN(object):
 
         self.saver = tf.train.Saver()
 
-    def train(self, config):
-        """Train DCGAN"""
-        if config.dataset == 'mnist':
-            data_X, data_y = self.load_mnist()
-        else:
-            data = glob(os.path.join("./data", config.dataset, "*.jpg"))
-        #np.random.shuffle(data)
-
-        d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+    def build_training_model(self):
+        self.d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
                           .minimize(self.d_loss, var_list=self.d_vars)
-        g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+        self.g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
                           .minimize(self.g_loss, var_list=self.g_vars)
         tf.initialize_all_variables().run()
 
@@ -135,33 +147,95 @@ class DCGAN(object):
         self.d_sum = tf.merge_summary([self.z_sum, self.d_sum, self.d_loss_real_sum, self.d_loss_sum])
         self.writer = tf.train.SummaryWriter("./logs", self.sess.graph)
 
-        sample_z = np.random.uniform(-1, 1, size=(self.sample_size , self.z_dim))
+        self.sample_z = np.random.uniform(-1, 1, size=(self.sample_size , self.z_dim))
+
+        sample_images, sample_labels = self.loader.retrieve()
+        self.sample_images = sample_images
+        self.sample_labels = sample_labels
+
+    def train_on_batch(self, i):
+        # "i" is the batch number, for the summary...
+        batch_images, batch_labels = self.loader.retrieve()
+
+        batch_z = np.random.uniform(-1, 1, [config.batch_size, self.z_dim])\
+                            .astype(np.float32)
+        if self.y_dim:
+            _, summary_str = self.sess.run([d_optim, self.d_sum],
+                feed_dict={ self.images: batch_images, self.z: batch_z, self.y:batch_labels })
+            self.writer.add_summary(summary_str, counter)
+
+            # Update G network
+            _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={ self.z: batch_z, self.y:batch_labels })
+            self.writer.add_summary(summary_str, counter)
+
+            # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
+            _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={ self.z: batch_z, self.y:batch_labels })
+            self.writer.add_summary(summary_str, counter)
+            
+            errD_fake = self.d_loss_fake.eval({self.z: batch_z, self.y:batch_labels})
+            errD_real = self.d_loss_real.eval({self.images: batch_images, self.y:batch_labels})
+            errG = self.g_loss.eval({self.z: batch_z, self.y:batch_labels})            
+
+
+
+
+        pass
+
+    def train(self, config):
+        self.build_training_model()
+        """Train DCGAN"""
+        # if config.dataset == 'mnist':
+        #     data_X, data_y = self.load_mnist()
+        # else:
+        #     data = glob(os.path.join("./data", config.dataset, "*.jpg"))
+        #np.random.shuffle(data)
+
+        # d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+        #                   .minimize(self.d_loss, var_list=self.d_vars)
+        # g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+        #                   .minimize(self.g_loss, var_list=self.g_vars)
+        # tf.initialize_all_variables().run()
+
+        # self.g_sum = tf.merge_summary([self.z_sum, self.d__sum, 
+        #     self.G_sum, self.d_loss_fake_sum, self.g_loss_sum])
+        # self.d_sum = tf.merge_summary([self.z_sum, self.d_sum, self.d_loss_real_sum, self.d_loss_sum])
+        # self.writer = tf.train.SummaryWriter("./logs", self.sess.graph)
+
+        # sample_z = np.random.uniform(-1, 1, size=(self.sample_size , self.z_dim))
+
         
-        if config.dataset == 'mnist':
-            sample_images = data_X[0:self.sample_size]
-            sample_labels = data_y[0:self.sample_size]
-        else:
-            sample_files = data[0:self.sample_size]
-            sample = [get_image(sample_file, self.image_size, is_crop=self.is_crop, resize_w=self.output_size, is_grayscale = self.is_grayscale) for sample_file in sample_files]
-            if (self.is_grayscale):
-                sample_images = np.array(sample).astype(np.float32)[:, :, :, None]
-            else:
-                sample_images = np.array(sample).astype(np.float32)
+        # if config.dataset == 'mnist':
+        #     sample_images = self.loader.retrieve()
+        #     sample_images = data_X[0:self.sample_size]
+        #     sample_labels = data_y[0:self.sample_size]
+        # else:
+        #     sample_files = data[0:self.sample_size]
+        #     sample = [get_image(sample_file, self.image_size, is_crop=self.is_crop, resize_w=self.output_size_w, resize_h=self.output_size_h, is_grayscale = self.is_grayscale) for sample_file in sample_files]
+        #     if (self.is_grayscale):
+        #         sample_images = np.array(sample).astype(np.float32)[:, :, :, None]
+        #     else:
+        #         sample_images = np.array(sample).astype(np.float32)
             
         counter = 1
         start_time = time.time()
+
+        num_batches = (config.epochs * 50000) // (self.batch_size) 
 
         if self.load(self.checkpoint_dir):
             print(" [*] Load SUCCESS")
         else:
             print(" [!] Load failed...")
 
-        for epoch in xrange(config.epoch):
-            if config.dataset == 'mnist':
-                batch_idxs = min(len(data_X), config.train_size) // config.batch_size
-            else:            
-                data = glob(os.path.join("./data", config.dataset, "*.jpg"))
-                batch_idxs = min(len(data), config.train_size) // config.batch_size
+        # for epoch in xrange(config.epoch):
+        for batch in xrange(num_batches):
+            # if config.dataset == 'mnist':
+            #     batch_idxs = min(len(data_X), config.train_size) // config.batch_size
+            # else:            
+            #     data = glob(os.path.join("./data", config.dataset, "*.jpg"))
+            #     batch_idxs = min(len(data), config.train_size) // config.batch_size
+            self.train_on_batch(batch)
 
             for idx in xrange(0, batch_idxs):
                 if config.dataset == 'mnist':
@@ -169,7 +243,7 @@ class DCGAN(object):
                     batch_labels = data_y[idx*config.batch_size:(idx+1)*config.batch_size]
                 else:
                     batch_files = data[idx*config.batch_size:(idx+1)*config.batch_size]
-                    batch = [get_image(batch_file, self.image_size, is_crop=self.is_crop, resize_w=self.output_size, is_grayscale = self.is_grayscale) for batch_file in batch_files]
+                    batch = [get_image(batch_file, self.image_size, is_crop=self.is_crop, resize_w=self.output_size_w, resize_=self.output_size_h, is_grayscale = self.is_grayscale) for batch_file in batch_files]
                     if (self.is_grayscale):
                         batch_images = np.array(batch).astype(np.float32)[:, :, :, None]
                     else:
